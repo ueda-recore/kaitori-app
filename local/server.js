@@ -66,7 +66,8 @@ http.createServer(async (req, res) => {
       const p = u.pathname.slice(4), body = ['GET', 'DELETE'].includes(req.method) ? '' : (await readBody(req)).toString();
       if (MOCK) { const [s, o] = mock(req.method, p, u.searchParams, body ? JSON.parse(body) : {}); return send(res, s, o); }
       const extra = req.headers['x-store-id'] && !STORE ? { 'X-Store-Id': req.headers['x-store-id'] } : {};
-      const r = await fetch(BASE + p + u.search, { method: req.method, headers: headers(extra), body: body || undefined });
+      const hh = headers(extra); if (!body) delete hh['Content-Type']; // ボディなしでContent-Typeを付けると422になる
+      const r = await fetch(BASE + p + u.search, { method: req.method, headers: hh, body: body || undefined });
       const t = await r.text(); res.writeHead(r.status, { 'Content-Type': 'application/json; charset=utf-8', 'X-Total-Count': r.headers.get('x-total-count') || '' }); return res.end(t);
     }
     const f = path.join(__dirname, 'public', u.pathname === '/' ? 'index.html' : path.normalize(u.pathname).replace(/^(\.\.[\/\\])+/, ''));

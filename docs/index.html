@@ -61,7 +61,7 @@ async function api(method,path,body,hdr={}){
   const t0=Date.now();let status,j;
   try{
     if(CFG.mock){const u=new URL('http://x'+path);[status,j]=mock(method,u.pathname,u.searchParams,body||{})}
-    else{const h={'Content-Type':'application/json',Authorization:CFG.prefix+CFG.key,...(CFG.store?{'X-Store-Id':CFG.store}:{}),...hdr};
+    else{const h={Authorization:CFG.prefix+CFG.key,...(body?{'Content-Type':'application/json'}:{}),...(CFG.store?{'X-Store-Id':CFG.store}:{}),...hdr};
       const r=await fetch(CFG.base.replace(/\/$/,'')+path,{method,headers:h,body:body?JSON.stringify(body):undefined});status=r.status;const text=await r.text();try{j=JSON.parse(text)}catch{j=text}}
   }catch(e){status=0;j={network_error:String(e),hint:'CORSで拒否された可能性があります（設定のプロキシURL参照）'}}
   LOG.unshift({t:new Date().toLocaleTimeString(),method,path,status,ms:Date.now()-t0,req:body,res:j});renderLog();
