@@ -43,6 +43,7 @@ const saveCfg=()=>localStorage.kcfg=JSON.stringify(CFG);
 /* ---- ブラウザ内モック ---- */
 const db={members:[],products:[],cases:[],idents:[],seq:100};const nid=()=>++db.seq;
 function mock(method,p,q,b){let m;
+ if(p==='/configs')return[200,{payments:[{id:1,name:'現金',type:'CASH'},{id:2,name:'銀行振込',type:'BANK'}],cashiers:[{id:1,name:'レジ1',store:{id:1,name:'(mock)店'}}],stores:[{id:1,name:'(mock)店'}]}];
  if(p==='/members'&&method==='GET'){const k=q.get('keyword')||'';return[200,db.members.filter(x=>!k||JSON.stringify(x).includes(k))]}
  if(p==='/members'&&method==='POST'){const x={id:nid(),code:'M'+db.seq,...b};db.members.push(x);return[201,x]}
  if(p==='/products'&&method==='GET'){const t=q.get('title')||'',j=q.get('pa_jan')||'';return[200,db.products.filter(x=>(!t||x.title.includes(t))&&(!j||(x.attribute||{}).jan===j))]}
@@ -50,7 +51,7 @@ function mock(method,p,q,b){let m;
  if(p==='/v2/bas_cases'&&method==='POST'){const x={id:nid(),status:'ASSESSING',...b,goods:(b.goods||[]).map(g=>({id:nid(),...g})),attachments:[],txns:[]};x.summary={total:x.goods.reduce((s,g)=>s+g.quantity*g.unit_price,0)};db.cases.push(x);return[201,x]}
  if((m=p.match(/^\/v2\/bas_cases\/(\d+)$/))&&method==='GET'){const x=db.cases.find(y=>y.id==m[1]);return x?[200,x]:[404,{message:'not found'}]}
  if((m=p.match(/^\/v2\/bas_cases\/(\d+)\/status$/))&&method==='PUT'){const x=db.cases.find(y=>y.id==m[1]);const ok={ASSESSING:['ASSESSED'],ASSESSED:['CONFIRMED','ASSESSING','CANCELED'],CONFIRMED:['CANCELED']};if(!x||!(ok[x.status]||[]).includes(b.status))return[422,{message:`(mock) cannot change ${x&&x.status} -> ${b.status}`}];x.status=b.status;return[200,x]}
- if((m=p.match(/^\/v2\/bas_cases\/(\d+)\/(txns|attachments)$/))&&method==='POST'){const x=db.cases.find(y=>y.id==m[1]);(x[m[2]]=x[m[2]]||[]).push(b);return[201,{id:nid(),...b}]}
+ if((m=p.match(/^\/v2\/bas_cases\/(\d+)\/(txns|attachments)$/))&&method==='POST'){if(m[2]==='txns'&&!(b.tenders||[]).every(t=>t.payment_id))return[400,{error:{code:'VALIDATE_FAILED',detail:{'/body/tenders/0':["must have required property 'payment_id'"]}}}];const x=db.cases.find(y=>y.id==m[1]);(x[m[2]]=x[m[2]]||[]).push(b);return[201,{id:nid(),...b}]}
  if(p==='/identifications'&&method==='POST'){const x={id:nid(),status:'IN_PROGRESS',attachments:[],...b};db.idents.push(x);return[201,x]}
  if((m=p.match(/^\/identifications\/(\d+)\/attachments$/))&&method==='POST')return[201,{id:nid(),...b}];
  if((m=p.match(/^\/identifications\/(\d+)\/status$/))&&method==='PUT'){const x=db.idents.find(y=>y.id==m[1]);if(x)x.status=b.status;return[200,x||{}]}
@@ -91,7 +92,7 @@ function saveSet(){CFG.mock=val('cm')==='1';CFG.base=val('cb')||'https://co-api.
 function render(){
   $('#nav').innerHTML=STEPS.map((s,i)=>`<button class="${i==S.step?'on':''} ${S.done[i]?'done':''}" onclick="go(${i})">${i+1}.${s}</button>`).join('');
   $('#main').innerHTML=(S.settings?vSet():'')+[v0,v1,v2,v3,v4,v5,v6][S.step]();
-  if(S.step==4)initSig();
+  if(S.step==4)initSig();if(S.step==5)loadCfg();
 }
 
 /* 1 顧客 */
@@ -156,10 +157,15 @@ async function saveSig(){await run('smsg',async()=>{const blob=await new Promise
 /* 6 支払い */
 function v5(){const tot=S.goods.reduce((s,g)=>s+g.quantity*g.unit_price,0);return `<div class="card"><h2>査定承認・支払い</h2>
 <div class="muted">① 査定承認: ASSESSING→ASSESSED→CONFIRMED ／ ② 精算(txns)</div><div id="amsg"></div><button class="p" onclick="approve()">① 査定承認（ステータス進行）</button></div>
-<div class="card"><label>支払方法（payment・値は仕様確認が必要。まず CASH）</label><input id="pay" value="CASH"><label>支払金額</label><input id="pamt" type="number" value="${tot}"><label>つり銭</label><input id="chg" type="number" value="0">
+<div class="card"><label>支払方法（GET /configs の payments）</label><select id="pay"><option value="">読み込み中…</option></select>
+<label>レジ（任意）</label><select id="cashier"><option value="">指定しない</option></select>
+<label>支払金額</label><input id="pamt" type="number" value="${tot}"><div class="muted">つり銭はRECORE側で計算されます（リクエストには含めません）</div>
 <button class="p" onclick="pay()">② 精算を登録（POST …/txns）</button><div id="pmsg2"></div>${S.done[5]?'<button class="p" onclick="go(6)">完了・検証へ →</button>':''}</div>`}
+async function loadCfg(){try{if(!S.configs)S.configs=await api('GET','/configs');const c=S.configs,sel=document.getElementById('pay');if(!sel)return;
+  sel.innerHTML=(c.payments||[]).map(x=>`<option value="${x.id}">${esc(x.name)}（${esc(x.type)}・id ${x.id}）</option>`).join('')||'<option value="">なし</option>';
+  document.getElementById('cashier').innerHTML='<option value="">指定しない</option>'+(c.cashiers||[]).map(x=>`<option value="${x.id}">${esc(x.name)}${x.store?'（'+esc(x.store.name)+'）':''}</option>`).join('')}catch(e){msg('pmsg2','支払方法を取得できません: '+e.message,false)}}
 async function approve(){await run('amsg',async()=>{await api('PUT',`/v2/bas_cases/${S.caseId}/status`,{status:'ASSESSED'});await api('PUT',`/v2/bas_cases/${S.caseId}/status`,{status:'CONFIRMED'});msg('amsg','CONFIRMED になりました',true)})}
-async function pay(){await run('pmsg2',async()=>{const a=+val('pamt');await api('POST',`/v2/bas_cases/${S.caseId}/txns`,{amount:a,tenders:[{payment:val('pay'),amount:a,change:+val('chg')}]});mark(5);msg('pmsg2','登録しました',true);render()})}
+async function pay(){await run('pmsg2',async()=>{const a=+val('pamt'),pid=+val('pay');if(!pid)throw new Error('支払方法を選んでください');const body={amount:a,tenders:[{payment_id:pid,amount:a}]};if(val('cashier'))body.cashier_id=+val('cashier');await api('POST',`/v2/bas_cases/${S.caseId}/txns`,body);mark(5);render()})}
 
 /* 7 検証 */
 function v6(){return `<div class="card"><h2>未確認事項の検証</h2><div class="muted">ここでの結果が、開発への質問1〜3の答えになります。</div>
